@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>เกมทดสอบรีเฟล็กซ์</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #111; color: #fff;
+    font-family: sans-serif; user-select: none; }
+  body { overflow: hidden; }
+
+  #game { height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 10px; overflow-y: auto; position: relative; z-index: 1; }
+  h1 { font-size: clamp(22px, 4vmin, 44px); margin: 0 0 8px; }
+  p { margin: 6px 0; opacity: .8; font-size: clamp(14px, 2.2vmin, 24px); }
+  #circle { width: clamp(150px, 32vmin, 380px); height: clamp(150px, 32vmin, 380px);
+    border-radius: 50%; background: #c33; cursor: pointer; flex-shrink: 0;
+    margin: 14px 0; display: flex; align-items: center; justify-content: center;
+    font-size: clamp(18px, 3vmin, 34px); font-weight: bold; transition: background .1s; }
+  #circle.go { background: #2c5; }
+  #startBtn, #again { font-size: 20px; padding: 14px 32px; border: 0; border-radius: 12px;
+    background: #38f; color: #fff; margin-top: 12px; cursor: pointer;
+    position: relative; z-index: 5; flex-shrink: 0; }
+
+  #scare { position: fixed; inset: 0; display: none; align-items: center;
+    justify-content: center; flex-direction: column; background: #000;
+    z-index: 99; pointer-events: none; }
+  #scare.on { display: flex; animation: flash .12s infinite, shake .08s infinite; pointer-events: auto; }
+  #face { font-size: 60vmin; line-height: 1; transform: scale(.2); }
+  #scare.on #face { animation: zoom .25s forwards; }
+  @keyframes zoom { to { transform: scale(2.2); } }
+  @keyframes flash { 0%,100% { background: #000; } 50% { background: #a00; } }
+  @keyframes shake {
+    0% { transform: translate(8px, 6px); } 25% { transform: translate(-8px, -6px); }
+    50% { transform: translate(6px, -8px); } 75% { transform: translate(-6px, 8px); }
+    100% { transform: translate(8px, 6px); } }
+
+  #prank { position: fixed; inset: 0; display: none; align-items: center;
+    justify-content: center; flex-direction: column; background: #fd0; color: #111;
+    z-index: 100; text-align: center; padding: 20px; }
+  #prank h1 { font-size: clamp(30px, 6vmin, 64px); }
+  #prank p { opacity: 1; }
+  #prank .big { font-size: 90px; }
+</style>
+</head>
+<body>
+
+<div id="game">
+  <h1>⚡ ทดสอบรีเฟล็กซ์</h1>
+  <p id="msg">คลิกวงกลม (หรือกด Space) ให้ไวที่สุดตอนที่เป็นสีเขียว<br>ต้องทำให้ผ่าน 3 รอบ!</p>
+  <div id="circle">รอก่อน...</div>
+  <p id="score">รอบที่ 0 / 3</p>
+  <button id="startBtn" type="button">เริ่มเลย</button>
+</div>
+
+<div id="scare"><div id="face">👹</div></div>
+
+<div id="prank">
+  <div class="big">😂</div>
+  <h1>โดนหลอกแล้วว!!</h1>
+  <p>ตกใจไหมล่ะ</p>
+  <button id="again" type="button">เล่นอีกที</button>
+</div>
+
+<script>
+const circle = document.getElementById("circle");
+const msg = document.getElementById("msg");
+const score = document.getElementById("score");
+const startBtn = document.getElementById("startBtn");
+const scare = document.getElementById("scare");
+const prank = document.getElementById("prank");
+const again = document.getElementById("again");
+
+const START_MSG = "คลิกวงกลม (หรือกด Space) ให้ไวที่สุดตอนที่เป็นสีเขียว<br>ต้องทำให้ผ่าน 3 รอบ!";
+let ctx = null, round = 0, ready = false, timer = null, busy = false;
+
+// ---------- เสียง ----------
+function initAudio() {
+  try {
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) ctx = new AC();
+    }
+    if (ctx && ctx.state === "suspended") ctx.resume();
+  } catch (e) { ctx = null; }
+}
+
+function sound() {
+  if (!ctx) return;
+  try {
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.value = 1;
+    master.connect(ctx.destination);
+
+    [880, 1320].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(f, now);
+      o.frequency.linearRampToValueAtTime(f * 1.8, now + 0.3);
+      o.frequency.linearRampToValueAtTime(f * 0.7, now + 1.4);
+      g.gain.setValueAtTime(0.5, now);
+      g.gain.linearRampToValueAtTime(0, now + 1.6);
+      o.connect(g); g.connect(master);
+      o.start(now + i * 0.02); o.stop(now + 1.7);
+    });
+
+    const len = Math.floor(ctx.sampleRate * 0.6);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const n = ctx.createBufferSource();
+    n.buffer = buf;
+    n.connect(master);
+    n.start(now);
+  } catch (e) {}
+}
+
+// ---------- เต็มจอ ----------
+function goFullscreen() {
+  try {
+    const el = document.documentElement;
+    if (!document.fullscreenElement && el.requestFullscreen) {
+      const p = el.requestFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    }
+  } catch (e) {}
+}
+function exitFullscreen() {
+  try {
+    if (document.fullscreenElement && document.exitFullscreen) {
+      const p = document.exitFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    }
+  } catch (e) {}
+}
+
+// ---------- ผีโผล่ ----------
+function jumpscare() {
+  busy = true;
+  goFullscreen();
+  scare.classList.add("on");
+  sound();
+  try { if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 500]); } catch (e) {}
+  setTimeout(() => {
+    scare.classList.remove("on");
+    prank.style.display = "flex";
+  }, 2600);
+}
+
+// ---------- ลอจิกเกม ----------
+function nextRound() {
+  ready = false;
+  circle.classList.remove("go");
+  circle.textContent = "รอก่อน...";
+  score.textContent = "รอบที่ " + round + " / 3";
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    circle.classList.add("go");
+    circle.textContent = "กดเลย!";
+    ready = true;
+  }, 1500 + Math.random() * 2000);
+}
+
+function startGame() {
+  initAudio();
+  busy = false;
+  startBtn.style.display = "none";
+  round = 1;
+  msg.innerHTML = "อย่ากดก่อนเป็นสีเขียวนะ!";
+  nextRound();
+}
+
+function hit() {
+  if (!round || busy) return;
+  if (!ready) {
+    msg.innerHTML = "❌ เร็วไป! รอสีเขียวก่อน";
+    nextRound();
+    return;
+  }
+  if (round >= 3) {
+    clearTimeout(timer);
+    round = 0;
+    jumpscare();
+    return;
+  }
+  msg.innerHTML = "✅ เยี่ยม! อีกนิดเดียว";
+  round++;
+  nextRound();
+}
+
+function resetGame() {
+  exitFullscreen();
+  clearTimeout(timer);
+  busy = false;
+  round = 0;
+  ready = false;
+  prank.style.display = "none";
+  startBtn.style.display = "inline-block";
+  circle.classList.remove("go");
+  circle.textContent = "รอก่อน...";
+  score.textContent = "รอบที่ 0 / 3";
+  msg.innerHTML = START_MSG;
+}
+
+// ---------- ผูกเหตุการณ์ ----------
+startBtn.addEventListener("click", startGame);
+circle.addEventListener("pointerdown", hit);
+again.addEventListener("click", resetGame);
+
+addEventListener("keydown", function (e) {
+  if (e.code !== "Space" || e.repeat) return;
+  e.preventDefault();
+  if (prank.style.display === "flex") return;
+  if (round) hit();
+});
+</script>
+</body>
+</html>
